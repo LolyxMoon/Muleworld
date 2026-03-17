@@ -16,5 +16,6 @@ jobs:
       - run: npm install
       - run: |
           mkdir -p ~/.partykit
-          echo '{"login":"${{ secrets.PARTYKIT_LOGIN }}","access_token":"${{ secrets.PARTYKIT_TOKEN }}"}' > ~/.partykit/config.json
+          echo '{"login":"lolyxmoon","access_token":"${{ secrets.PARTYKIT_TOKEN }}","type":"clerk","username":"lolyxmoon","team":"lolyxmoon"}' > ~/.partykit/config.json
+          cat ~/.partykit/config.json
           npx partykit deploy party/server.js --name mulerun-world
