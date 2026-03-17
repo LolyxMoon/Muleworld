@@ -776,6 +776,12 @@ export default function MuleRunWorld() {
   // ── Multiplayer ──
   const mp = useMultiplayer(connected, playerName, playerSkin, walletAddr);
 
+  // Keep a ref to otherPlayers so the game loop always has the latest
+  const otherPlayersRef = useRef({});
+  const myIdRef2 = useRef(null);
+  useEffect(() => { otherPlayersRef.current = mp.otherPlayers; }, [mp.otherPlayers]);
+  useEffect(() => { myIdRef2.current = mp.myId; }, [mp.myId]);
+
   // Proximity
   const [nearForge, setNearForge] = useState(false);
   const [nearLab, setNearLab] = useState(false);
@@ -926,7 +932,7 @@ RULES:
   useEffect(() => {
     if (!connected) return;
     const iv = setInterval(() => {
-      mp.otherPlayers && Object.values(mp.otherPlayers).forEach(pl => {
+      Object.values(otherPlayersRef.current).forEach(pl => {
         if (pl.chatTimer > 0) {
           pl.chatTimer -= 6; // ~3 sec total (180 / 6 = 30 ticks * 100ms = 3s)
           if (pl.chatTimer <= 0) { pl.chatMsg = null; pl.chatTimer = 0; }
@@ -938,7 +944,7 @@ RULES:
       });
     }, 100);
     return () => clearInterval(iv);
-  }, [connected, mp.otherPlayers]);
+  }, [connected]);
 
   // ── Bot scheduler ──
   useEffect(() => {
@@ -1089,8 +1095,8 @@ RULES:
     // Add deployed AI agent
     if (da) ents.push({ type: "agent", ...da });
     // Real multiplayer players
-    Object.entries(mp.otherPlayers).forEach(([pid, pl]) => {
-      if (pid !== mp.myId) {
+    Object.entries(otherPlayersRef.current).forEach(([pid, pl]) => {
+      if (pid !== myIdRef2.current) {
         ents.push({ type: "real_player", id: pid, x: pl.x || 600, y: pl.y || 504, dir: pl.dir || 0, frame: time, name: pl.name || "???", skinIdx: pl.skin || 0, emote: pl.emote, emoteTimer: pl.emoteTimer, chatMsg: pl.chatMsg, chatTimer: pl.chatTimer });
       }
     });
