@@ -831,45 +831,45 @@ RULES:
 - Stay in character as a ${roleInfo?.label || "agent"}
 - Be helpful, fun, and crypto-native
 - Use emojis sparingly but naturally
-- If asked about prices/markets/tokens, use web search to find real data
 - Never break character — you ARE a mule agent in this world
 - Respond in the same language the user writes in`;
 
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY || "";
+
     try {
-      const body = {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 150,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMsg }],
-      };
+      if (!apiKey) throw new Error("No API key");
 
-      // Add web search if agent has that skill
-      if (agent.skills.includes("web_browse") || agent.skills.includes("chain_read")) {
-        body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-      }
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          max_tokens: 120,
+          temperature: 0.8,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMsg },
+          ],
+        }),
       });
 
       const data = await response.json();
-      const reply = data.content?.filter(b => b.type === "text").map(b => b.text).join(" ").trim() || "...";
-
-      // Truncate for chat bubble
+      const reply = data.choices?.[0]?.message?.content?.trim() || "...";
       const shortReply = reply.length > 100 ? reply.slice(0, 97) + "..." : reply;
 
       agent.isTyping = false;
       agent.chatMsg = shortReply;
-      agent.chatTimer = 280;
+      agent.chatTimer = 500;
       addChat(`🤖 ${agent.agentName}`, shortReply, agent.skin);
       setAgentThinking(false);
     } catch (err) {
       agent.isTyping = false;
       const fallback = getFallbackResponse(agent.role);
       agent.chatMsg = fallback;
-      agent.chatTimer = 200;
+      agent.chatTimer = 500;
       addChat(`🤖 ${agent.agentName}`, fallback, agent.skin);
       setAgentThinking(false);
     }
@@ -898,6 +898,7 @@ RULES:
   const playerRef = useRef({ x: 25 * TILE, y: 21 * TILE, dir: 0, frame: 0 });
   const keysRef = useRef({});
   const frameRef = useRef(0);
+  const lastTimeRef = useRef(performance.now());
   const chatBubbleRef = useRef(null);
   const emoteRef = useRef(null);
   const emoteTimerRef = useRef(0);
@@ -943,9 +944,9 @@ RULES:
   useEffect(() => {
     if (!connected) return;
     const timeouts = [];
-    timeouts.push(setTimeout(() => { const b = botsRef.current[2]; b.chatMsg = "hey newcomer! welcome to MuleRun World 💕"; b.chatTimer = 220; addChat(b.name, b.chatMsg, b.skin); }, 2000));
-    timeouts.push(setTimeout(() => { const b = botsRef.current[0]; b.chatMsg = "gm fren! another mule joins the herd 🫏"; b.chatTimer = 200; addChat(b.name, b.chatMsg, b.skin); }, 5000));
-    timeouts.push(setTimeout(() => { const b = botsRef.current[5]; b.chatMsg = "check the Token Forge (east) and Agent Lab (west)! 🔥"; b.chatTimer = 240; addChat(b.name, b.chatMsg, b.skin); }, 9000));
+    timeouts.push(setTimeout(() => { const b = botsRef.current[2]; b.chatMsg = "hey newcomer! welcome to MuleRun World 💕"; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 2000));
+    timeouts.push(setTimeout(() => { const b = botsRef.current[0]; b.chatMsg = "gm fren! another mule joins the herd 🫏"; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 5000));
+    timeouts.push(setTimeout(() => { const b = botsRef.current[5]; b.chatMsg = "check the Token Forge (east) and Agent Lab (west)! 🔥"; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 9000));
 
     const interval = setInterval(() => {
       const bIdx = Math.floor(Math.random() * BOTS.length);
@@ -957,7 +958,7 @@ RULES:
         let mi; do { mi = Math.floor(Math.random() * BOTS[bIdx].messages.length); } while (mi === bot.lastMsgIdx && BOTS[bIdx].messages.length > 1);
         bot.lastMsgIdx = mi;
         const msg = BOTS[bIdx].messages[mi];
-        bot.chatMsg = msg; bot.chatTimer = 180 + Math.floor(Math.random() * 80);
+        bot.chatMsg = msg; bot.chatTimer = 500;
         addChat(bot.name, msg, bot.skin);
       }, 1200 + Math.random() * 800);
     }, 6000 + Math.random() * 4000);
@@ -973,8 +974,15 @@ RULES:
     const time = frameRef.current++;
     const p = playerRef.current;
 
+    // ── Delta time (normalized to 60fps) ──
+    const now = performance.now();
+    const rawDt = (now - lastTimeRef.current) / 1000; // seconds
+    lastTimeRef.current = now;
+    const dt = Math.min(rawDt, 0.05); // cap at 50ms to avoid jumps
+    const d = dt * 60; // at 60fps d=1, at 144fps d≈0.42
+
     if (!anyModalOpen) {
-      let dx = 0, dy = 0; const spd = 1.75;
+      let dx = 0, dy = 0; const spd = 1.8 * d;
       if (keysRef.current["ArrowUp"] || keysRef.current["w"] || keysRef.current["W"]) dy = -spd;
       if (keysRef.current["ArrowDown"] || keysRef.current["s"] || keysRef.current["S"]) dy = spd;
       if (keysRef.current["ArrowLeft"] || keysRef.current["a"] || keysRef.current["A"]) dx = -spd;
@@ -988,10 +996,10 @@ RULES:
 
     // Bots
     botsRef.current.forEach((bot, i) => {
-      bot.frame = time; bot.moveTimer--;
-      if (bot.chatTimer > 0) bot.chatTimer--; else bot.chatMsg = null;
-      if (bot.emoteTimer > 0) bot.emoteTimer--; else bot.emote = null;
-      if (bot.typingTimer > 0) bot.typingTimer--; else bot.isTyping = false;
+      bot.frame = time; bot.moveTimer -= d;
+      if (bot.chatTimer > 0) { bot.chatTimer -= d; } else bot.chatMsg = null;
+      if (bot.emoteTimer > 0) { bot.emoteTimer -= d; } else bot.emote = null;
+      if (bot.typingTimer > 0) { bot.typingTimer -= d; } else bot.isTyping = false;
       if (bot.moveTimer <= 0) {
         const home = BOTS[i];
         const ddx = (home.homeX * TILE + (Math.random() - 0.5) * home.roamRadius * TILE * 2) - bot.x;
@@ -1000,34 +1008,32 @@ RULES:
         const nty = Math.floor((bot.y + Math.sign(ddy) * TILE + 12) / TILE);
         if (isWalkable(ntx, nty)) { bot.targetX = bot.x + Math.sign(ddx) * TILE; bot.targetY = bot.y + Math.sign(ddy) * TILE; }
         bot.moveTimer = 40 + Math.random() * 120;
-        if (Math.random() < 0.015) { bot.emote = EMOTES[Math.floor(Math.random() * EMOTES.length)]; bot.emoteTimer = 120; }
+        if (Math.random() < 0.015) { bot.emote = EMOTES[Math.floor(Math.random() * EMOTES.length)]; bot.emoteTimer = 200; }
       }
       const mx = bot.targetX - bot.x, my = bot.targetY - bot.y;
-      if (Math.abs(mx) > 0.5 || Math.abs(my) > 0.5) { bot.x += mx * 0.028; bot.y += my * 0.028; bot.dir = 1; } else bot.dir = 0;
+      if (Math.abs(mx) > 0.5 || Math.abs(my) > 0.5) { bot.x += mx * 0.03 * d; bot.y += my * 0.03 * d; bot.dir = 1; } else bot.dir = 0;
     });
 
-    if (chatBubbleRef.current) { chatBubbleRef.current.timer--; if (chatBubbleRef.current.timer <= 0) chatBubbleRef.current = null; }
-    if (emoteTimerRef.current > 0) { emoteTimerRef.current--; if (emoteTimerRef.current <= 0) emoteRef.current = null; }
+    if (chatBubbleRef.current) { chatBubbleRef.current.timer -= d; if (chatBubbleRef.current.timer <= 0) chatBubbleRef.current = null; }
+    if (emoteTimerRef.current > 0) { emoteTimerRef.current -= d; if (emoteTimerRef.current <= 0) emoteRef.current = null; }
 
     // ── Deployed AI Agent movement ──
     const da = deployedAgentRef.current;
     if (da) {
       da.frame = time;
-      da.moveTimer--;
-      if (da.chatTimer > 0) da.chatTimer--; else da.chatMsg = null;
+      da.moveTimer -= d;
+      if (da.chatTimer > 0) { da.chatTimer -= d; } else da.chatMsg = null;
 
       // Agent follows player like a companion
       const distToPlayer = Math.sqrt((da.x - p.x) ** 2 + (da.y - p.y) ** 2);
 
       if (distToPlayer > 4 * TILE) {
-        // Too far — teleport closer
         da.targetX = p.x + (Math.random() - 0.5) * 3 * TILE;
         da.targetY = p.y + (Math.random() - 0.5) * 3 * TILE;
         da.moveTimer = 5;
       } else if (da.moveTimer <= 0) {
-        // Stay near player — offset slightly so it doesn't overlap
-        const angle = Math.sin(time * 0.001) * Math.PI * 2; // orbit slowly
-        const followDist = 1.5 + Math.random() * 1.5; // 1.5-3 tiles away
+        const angle = Math.sin(time * 0.001) * Math.PI * 2;
+        const followDist = 1.5 + Math.random() * 1.5;
         const tgtX = p.x + Math.cos(angle) * followDist * TILE + (Math.random() - 0.5) * TILE;
         const tgtY = p.y + Math.sin(angle) * followDist * TILE + (Math.random() - 0.5) * TILE;
         const ntx = Math.floor((tgtX + 12) / TILE);
@@ -1038,8 +1044,7 @@ RULES:
 
       const dmx = da.targetX - da.x, dmy = da.targetY - da.y;
       if (Math.abs(dmx) > 1 || Math.abs(dmy) > 1) {
-        // Move slightly slower than player for natural follow feel
-        const followSpeed = distToPlayer > 2.5 * TILE ? 0.05 : 0.025;
+        const followSpeed = (distToPlayer > 2.5 * TILE ? 0.04 : 0.02) * d;
         da.x += dmx * followSpeed; da.y += dmy * followSpeed; da.dir = 1;
       } else da.dir = 0;
     }
@@ -1197,7 +1202,7 @@ RULES:
   const sendChat = e => {
     e?.preventDefault?.(); if (!chatInput.trim()) return;
     const msg = chatInput.trim();
-    chatBubbleRef.current = { msg, timer: 180 };
+    chatBubbleRef.current = { msg, timer: 500 };
     addChat(playerName || "You", msg, SKINS[playerSkin], true);
     setChatInput("");
 
@@ -1224,12 +1229,12 @@ RULES:
         const bd = BOTS.find(x => x.id === b.id);
         const msg2 = bd.messages[Math.floor(Math.random() * bd.messages.length)];
         b.isTyping = true;
-        setTimeout(() => { b.isTyping = false; b.chatMsg = msg2; b.chatTimer = 200; addChat(b.name, msg2, b.skin); }, 1500 + Math.random() * 1500);
+        setTimeout(() => { b.isTyping = false; b.chatMsg = msg2; b.chatTimer = 500; addChat(b.name, msg2, b.skin); }, 1500 + Math.random() * 1500);
       }
     }, 500);
   };
 
-  const sendEmote = em => { emoteRef.current = em; emoteTimerRef.current = 140; setShowEmotes(false); addChat(playerName, em, SKINS[playerSkin], true); mp.sendEmote(em); };
+  const sendEmote = em => { emoteRef.current = em; emoteTimerRef.current = 400; setShowEmotes(false); addChat(playerName, em, SKINS[playerSkin], true); mp.sendEmote(em); };
 
   const handleConnect = () => { if (!nameInput.trim()) return; setPlayerName(nameInput.trim()); setPlayerSkin(selectedSkin); setConnected(true); };
 
@@ -1242,8 +1247,8 @@ RULES:
     addChat("⚒ TOKEN FORGE", `${playerName} (${shortAddr}) is launching $${tokenSymbol.toUpperCase()} on four.meme! 🚀`, { body: PAL.forge_glow, ear: PAL.forge_glow, belly: "#ffd080" });
     setForgeDone(true);
     // Bots react
-    setTimeout(() => { const b = botsRef.current[0]; b.chatMsg = `$${tokenSymbol.toUpperCase()} just dropped! LFG 🚀🚀🚀`; b.chatTimer = 200; addChat(b.name, b.chatMsg, b.skin); }, 1500);
-    setTimeout(() => { const b = botsRef.current[3]; b.chatMsg = `interesting... watching $${tokenSymbol.toUpperCase()} closely 🐋`; b.chatTimer = 200; addChat(b.name, b.chatMsg, b.skin); }, 3500);
+    setTimeout(() => { const b = botsRef.current[0]; b.chatMsg = `$${tokenSymbol.toUpperCase()} just dropped! LFG 🚀🚀🚀`; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 1500);
+    setTimeout(() => { const b = botsRef.current[3]; b.chatMsg = `interesting... watching $${tokenSymbol.toUpperCase()} closely 🐋`; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 3500);
   };
 
   const handleLaunchAgent = () => {
@@ -1288,14 +1293,14 @@ RULES:
             if (deployedAgentRef.current) {
               const intro = `hey! I'm ${agentName}, your ${roleLabel}. talk to me anytime — just type @${agentName} or mention my name! 🤖`;
               deployedAgentRef.current.chatMsg = intro;
-              deployedAgentRef.current.chatTimer = 300;
+              deployedAgentRef.current.chatTimer = 500;
               addChat(`🤖 ${agentName}`, intro, agentSkin);
             }
           }, 2000);
 
           // Bots react
-          setTimeout(() => { const b = botsRef.current[1]; b.chatMsg = `whoa a real AI agent just spawned! welcome ${agentName}! 🫏`; b.chatTimer = 200; addChat(b.name, b.chatMsg, b.skin); }, 4000);
-          setTimeout(() => { const b = botsRef.current[5]; b.chatMsg = `${agentName} is powered by AI... the future is here 🔨`; b.chatTimer = 200; addChat(b.name, b.chatMsg, b.skin); }, 6000);
+          setTimeout(() => { const b = botsRef.current[1]; b.chatMsg = `whoa a real AI agent just spawned! welcome ${agentName}! 🫏`; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 4000);
+          setTimeout(() => { const b = botsRef.current[5]; b.chatMsg = `${agentName} is powered by AI... the future is here 🔨`; b.chatTimer = 500; addChat(b.name, b.chatMsg, b.skin); }, 6000);
         }, 800);
       }
     }, 900);
