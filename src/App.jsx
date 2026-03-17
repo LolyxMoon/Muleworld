@@ -726,6 +726,11 @@ export default function MuleRunWorld() {
   const [nameInput, setNameInput] = useState("");
   const [onlineCount] = useState(7 + Math.floor(Math.random() * 12));
 
+  // Project CA — set your contract address here
+  const PROJECT_CA = "0x0000000000000000000000000000000000000000"; // Replace with your real CA
+  const [caCopied, setCaCopied] = useState(false);
+  const copyCA = () => { navigator.clipboard.writeText(PROJECT_CA); setCaCopied(true); setTimeout(() => setCaCopied(false), 2000); };
+
   // Wallet state
   const [walletAddr, setWalletAddr] = useState("");
   const [walletBalance, setWalletBalance] = useState("");
@@ -771,17 +776,6 @@ export default function MuleRunWorld() {
   // ── Multiplayer ──
   const mp = useMultiplayer(connected, playerName, playerSkin, walletAddr);
 
-  // Register multiplayer chat callback
-  useEffect(() => {
-    if (!connected) return;
-    mp.onChat((name, msg, skin) => {
-      addChat(name, msg, skin ? { body: skin, ear: skin, belly: skin } : null);
-    });
-    mp.onEvent((event, name, detail) => {
-      addChat(`🌐 ${event}`, detail, null);
-    });
-  }, [connected, mp.onChat, mp.onEvent]);
-
   // Proximity
   const [nearForge, setNearForge] = useState(false);
   const [nearLab, setNearLab] = useState(false);
@@ -810,6 +804,11 @@ export default function MuleRunWorld() {
   const deployedAgentRef = useRef(null);
   const [hasDeployedAgent, setHasDeployedAgent] = useState(false);
   const [agentThinking, setAgentThinking] = useState(false);
+
+  // ── addChat (defined early so other hooks can use it) ──
+  const addChat = useCallback((name, msg, skin, isPlayer = false) => {
+    setChatLog(prev => [...prev.slice(-40), { name, msg, skin, isPlayer, time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }]);
+  }, []);
 
   // AI Agent chat function — calls Claude API with web search
   const agentRespond = useCallback(async (userMsg) => {
@@ -911,9 +910,34 @@ RULES:
     moveTimer: 30 + Math.random() * 100, isTyping: false, typingTimer: 0, lastMsgIdx: -1,
   })));
 
-  const addChat = useCallback((name, msg, skin, isPlayer = false) => {
-    setChatLog(prev => [...prev.slice(-40), { name, msg, skin, isPlayer, time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }]);
-  }, []);
+  // Register multiplayer chat/event callbacks
+  useEffect(() => {
+    if (!connected) return;
+    mp.onChat((name, msg, skin) => {
+      addChat(name, msg, skin ? { body: skin, ear: skin, belly: skin } : null);
+    });
+    mp.onEvent((event, name, detail) => {
+      addChat(`🌐 ${event}`, detail, null);
+    });
+  }, [connected, addChat, mp.onChat, mp.onEvent]);
+
+  // Decay chat bubbles & emotes on real multiplayer players (every 100ms)
+  useEffect(() => {
+    if (!connected) return;
+    const iv = setInterval(() => {
+      mp.otherPlayers && Object.values(mp.otherPlayers).forEach(pl => {
+        if (pl.chatTimer > 0) {
+          pl.chatTimer -= 6; // ~3 sec total (180 / 6 = 30 ticks * 100ms = 3s)
+          if (pl.chatTimer <= 0) { pl.chatMsg = null; pl.chatTimer = 0; }
+        }
+        if (pl.emoteTimer > 0) {
+          pl.emoteTimer -= 6;
+          if (pl.emoteTimer <= 0) { pl.emote = null; pl.emoteTimer = 0; }
+        }
+      });
+    }, 100);
+    return () => clearInterval(iv);
+  }, [connected, mp.otherPlayers]);
 
   // ── Bot scheduler ──
   useEffect(() => {
@@ -950,7 +974,7 @@ RULES:
     const p = playerRef.current;
 
     if (!anyModalOpen) {
-      let dx = 0, dy = 0; const spd = 2.5;
+      let dx = 0, dy = 0; const spd = 1.75;
       if (keysRef.current["ArrowUp"] || keysRef.current["w"] || keysRef.current["W"]) dy = -spd;
       if (keysRef.current["ArrowDown"] || keysRef.current["s"] || keysRef.current["S"]) dy = spd;
       if (keysRef.current["ArrowLeft"] || keysRef.current["a"] || keysRef.current["A"]) dx = -spd;
@@ -979,7 +1003,7 @@ RULES:
         if (Math.random() < 0.015) { bot.emote = EMOTES[Math.floor(Math.random() * EMOTES.length)]; bot.emoteTimer = 120; }
       }
       const mx = bot.targetX - bot.x, my = bot.targetY - bot.y;
-      if (Math.abs(mx) > 0.5 || Math.abs(my) > 0.5) { bot.x += mx * 0.04; bot.y += my * 0.04; bot.dir = 1; } else bot.dir = 0;
+      if (Math.abs(mx) > 0.5 || Math.abs(my) > 0.5) { bot.x += mx * 0.028; bot.y += my * 0.028; bot.dir = 1; } else bot.dir = 0;
     });
 
     if (chatBubbleRef.current) { chatBubbleRef.current.timer--; if (chatBubbleRef.current.timer <= 0) chatBubbleRef.current = null; }
@@ -991,19 +1015,32 @@ RULES:
       da.frame = time;
       da.moveTimer--;
       if (da.chatTimer > 0) da.chatTimer--; else da.chatMsg = null;
-      if (da.moveTimer <= 0) {
-        // Roam around center of map, but sometimes follow player
-        const followPlayer = Math.random() < 0.3;
-        const tgtX = followPlayer ? p.x + (Math.random() - 0.5) * 6 * TILE : (da.homeX + (Math.random() - 0.5) * da.roamRadius) * TILE;
-        const tgtY = followPlayer ? p.y + (Math.random() - 0.5) * 6 * TILE : (da.homeY + (Math.random() - 0.5) * da.roamRadius) * TILE;
+
+      // Agent follows player like a companion
+      const distToPlayer = Math.sqrt((da.x - p.x) ** 2 + (da.y - p.y) ** 2);
+
+      if (distToPlayer > 4 * TILE) {
+        // Too far — teleport closer
+        da.targetX = p.x + (Math.random() - 0.5) * 3 * TILE;
+        da.targetY = p.y + (Math.random() - 0.5) * 3 * TILE;
+        da.moveTimer = 5;
+      } else if (da.moveTimer <= 0) {
+        // Stay near player — offset slightly so it doesn't overlap
+        const angle = Math.sin(time * 0.001) * Math.PI * 2; // orbit slowly
+        const followDist = 1.5 + Math.random() * 1.5; // 1.5-3 tiles away
+        const tgtX = p.x + Math.cos(angle) * followDist * TILE + (Math.random() - 0.5) * TILE;
+        const tgtY = p.y + Math.sin(angle) * followDist * TILE + (Math.random() - 0.5) * TILE;
         const ntx = Math.floor((tgtX + 12) / TILE);
         const nty = Math.floor((tgtY + 12) / TILE);
         if (isWalkable(ntx, nty)) { da.targetX = tgtX; da.targetY = tgtY; }
-        da.moveTimer = 60 + Math.random() * 100;
+        da.moveTimer = 20 + Math.random() * 30;
       }
+
       const dmx = da.targetX - da.x, dmy = da.targetY - da.y;
       if (Math.abs(dmx) > 1 || Math.abs(dmy) > 1) {
-        da.x += dmx * 0.03; da.y += dmy * 0.03; da.dir = 1;
+        // Move slightly slower than player for natural follow feel
+        const followSpeed = distToPlayer > 2.5 * TILE ? 0.05 : 0.025;
+        da.x += dmx * followSpeed; da.y += dmy * followSpeed; da.dir = 1;
       } else da.dir = 0;
     }
 
@@ -1049,7 +1086,7 @@ RULES:
     // Real multiplayer players
     Object.entries(mp.otherPlayers).forEach(([pid, pl]) => {
       if (pid !== mp.myId) {
-        ents.push({ type: "real_player", id: pid, x: pl.x || 600, y: pl.y || 504, dir: pl.dir || 0, frame: time, name: pl.name || "???", skinIdx: pl.skin || 0, emote: pl.emote, emoteTimer: pl.emoteTimer });
+        ents.push({ type: "real_player", id: pid, x: pl.x || 600, y: pl.y || 504, dir: pl.dir || 0, frame: time, name: pl.name || "???", skinIdx: pl.skin || 0, emote: pl.emote, emoteTimer: pl.emoteTimer, chatMsg: pl.chatMsg, chatTimer: pl.chatTimer });
       }
     });
     ents.sort((a, b) => a.y - b.y);
@@ -1085,6 +1122,8 @@ RULES:
         ctx.strokeStyle = `rgba(52,211,153,${0.25 + Math.sin(time * 0.06) * 0.1})`;
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(rpSx + 12, rpSy + 12, 15, 0, Math.PI * 2); ctx.stroke();
+        // Chat bubble above head
+        if (e.chatMsg && e.chatTimer > 0) drawBubble(ctx, rpSx + 12, rpSy - 20, e.chatMsg);
         if (e.emote && e.emoteTimer > 0) { ctx.font = "18px serif"; ctx.textAlign = "center"; ctx.fillText(e.emote, rpSx + 12, rpSy - 26 + Math.sin(time * 0.1) * 3); }
       } else {
         drawMule(ctx, e.x, e.y, camX, camY, e.skin, e.dir, e.frame, false, e.name, e.isTyping);
@@ -1158,7 +1197,7 @@ RULES:
   const sendChat = e => {
     e?.preventDefault?.(); if (!chatInput.trim()) return;
     const msg = chatInput.trim();
-    chatBubbleRef.current = { msg, timer: 200 };
+    chatBubbleRef.current = { msg, timer: 180 };
     addChat(playerName || "You", msg, SKINS[playerSkin], true);
     setChatInput("");
 
@@ -1403,6 +1442,21 @@ RULES:
           <div style={{ padding: "7px 10px", background: PAL.ui_bg, borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", fontSize: 9, color: "rgba(255,255,255,0.45)", fontFamily: "'Silkscreen'" }}>
             🟢 {(mp.isConnected ? mp.onlineCount : 1) + BOTS.length} online {mp.isConnected && <span style={{ color: "rgba(52,211,153,0.5)" }}>· live</span>}
           </div>
+          {/* CA Click-to-Copy */}
+          <button onClick={copyCA} style={{
+            padding: "7px 12px", background: caCopied ? "rgba(52,211,153,0.12)" : PAL.ui_bg,
+            borderRadius: 8, border: caCopied ? "1px solid rgba(52,211,153,0.3)" : "1px solid rgba(240,192,64,0.1)",
+            fontSize: 8, color: caCopied ? "#34d399" : "rgba(255,255,255,0.5)", fontFamily: "'Silkscreen'",
+            cursor: "pointer", display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s",
+          }}
+            onMouseEnter={e => { if (!caCopied) e.currentTarget.style.borderColor = "rgba(240,192,64,0.3)"; }}
+            onMouseLeave={e => { if (!caCopied) e.currentTarget.style.borderColor = "rgba(240,192,64,0.1)"; }}>
+            <span style={{ color: PAL.accent, fontWeight: 700 }}>CA:</span>
+            <span style={{ fontFamily: "monospace", fontSize: 8, letterSpacing: 0.3 }}>
+              {caCopied ? "✅ Copied!" : `${PROJECT_CA.slice(0, 6)}...${PROJECT_CA.slice(-4)}`}
+            </span>
+            {!caCopied && <span style={{ fontSize: 10, opacity: 0.5 }}>📋</span>}
+          </button>
         </div>
 
         {/* Proximity indicators */}

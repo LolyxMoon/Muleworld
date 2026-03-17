@@ -86,8 +86,16 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
           break;
 
         case "chat":
-          if (data.id !== myId && chatCallbackRef.current) {
-            chatCallbackRef.current(data.name, data.msg, data.skin);
+          if (data.id !== myId) {
+            // Store chat bubble on the player (3 sec = ~180 frames at 60fps)
+            setOtherPlayers(prev => {
+              const p = prev[data.id];
+              if (!p) return prev;
+              return { ...prev, [data.id]: { ...p, chatMsg: data.msg, chatTimer: 180 } };
+            });
+            if (chatCallbackRef.current) {
+              chatCallbackRef.current(data.name, data.msg, data.skin);
+            }
           }
           break;
 
