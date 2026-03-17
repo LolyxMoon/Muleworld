@@ -1,0 +1,5 @@
+{
+  "name": "mulerun-world",
+  "main": "party/server.js",
+  "compatibilityDate": "2024-09-01"
+}
