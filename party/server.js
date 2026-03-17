@@ -1,21 +1,26 @@
 // party/server.js — MuleRun World Multiplayer Server
-// Handles: player join/leave, position sync, chat, events
 
 export default class MuleRunServer {
   constructor(room) {
     this.room = room;
-    this.players = new Map(); // id -> { name, skin, x, y, dir, wallet }
+    this.players = {};
   }
 
-  onConnect(conn, ctx) {
-    // Send existing players to the new connection
-    const existingPlayers = {};
-    for (const [id, data] of this.players) {
-      existingPlayers[id] = data;
+  onRequest(req) {
+    const count = Object.keys(this.players).length;
+    return new Response(JSON.stringify({ status: "ok", players: count }), {
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
+  onConnect(conn) {
+    const existing = {};
+    for (const [id, data] of Object.entries(this.players)) {
+      existing[id] = data;
     }
     conn.send(JSON.stringify({
       type: "init",
-      players: existingPlayers,
+      players: existing,
       playerId: conn.id,
     }));
   }
@@ -30,36 +35,30 @@ export default class MuleRunServer {
 
     switch (data.type) {
       case "join": {
-        // Player joins with their info
-        this.players.set(sender.id, {
+        this.players[sender.id] = {
           name: data.name || "Anon",
           skin: data.skin || 0,
           x: data.x || 600,
           y: data.y || 504,
           dir: 0,
           wallet: data.wallet || "",
-        });
-
-        // Broadcast to ALL (including sender gets confirmation)
+        };
         this.room.broadcast(JSON.stringify({
           type: "player_joined",
           id: sender.id,
-          player: this.players.get(sender.id),
-          count: this.players.size,
+          player: this.players[sender.id],
+          count: Object.keys(this.players).length,
         }));
         break;
       }
 
       case "move": {
-        // Update player position
-        const player = this.players.get(sender.id);
+        const player = this.players[sender.id];
         if (player) {
           player.x = data.x;
           player.y = data.y;
           player.dir = data.dir;
         }
-
-        // Broadcast to others (not sender — they already know their pos)
         this.room.broadcast(JSON.stringify({
           type: "player_moved",
           id: sender.id,
@@ -71,7 +70,6 @@ export default class MuleRunServer {
       }
 
       case "chat": {
-        // Broadcast chat message to all
         this.room.broadcast(JSON.stringify({
           type: "chat",
           id: sender.id,
@@ -92,7 +90,6 @@ export default class MuleRunServer {
       }
 
       case "event": {
-        // Token launches, agent deploys, etc — broadcast to all
         this.room.broadcast(JSON.stringify({
           type: "event",
           event: data.event,
@@ -105,15 +102,13 @@ export default class MuleRunServer {
   }
 
   onClose(conn) {
-    const player = this.players.get(conn.id);
-    this.players.delete(conn.id);
-
-    // Notify everyone
+    const player = this.players[conn.id];
+    delete this.players[conn.id];
     this.room.broadcast(JSON.stringify({
       type: "player_left",
       id: conn.id,
       name: player?.name || "???",
-      count: this.players.size,
+      count: Object.keys(this.players).length,
     }));
   }
 }

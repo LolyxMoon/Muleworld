@@ -1,39 +1,36 @@
-// src/useMultiplayer.js — PartyKit multiplayer hook
+// src/useMultiplayer.js — PartyKit multiplayer hook (fixed)
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ══ CONFIG ══
-// Change this after deploying PartyKit:
-// npx partykit deploy party/server.js --name mulerun-world
-// Then set: PARTYKIT_HOST = "mulerun-world.YOUR_USERNAME.partykit.dev"
-const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST || "localhost:1999";
+const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST || "";
 const ROOM_ID = "mulerun-main";
 
 export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
   const [otherPlayers, setOtherPlayers] = useState({});
   const [onlineCount, setOnlineCount] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
-  const [myId, setMyId] = useState(null);
+  const myIdRef = useRef(null);
   const wsRef = useRef(null);
   const chatCallbackRef = useRef(null);
   const eventCallbackRef = useRef(null);
 
-  // Connect to PartyKit
   useEffect(() => {
-    if (!enabled || !playerName) return;
+    if (!enabled || !playerName || !PARTYKIT_HOST) return;
 
     let ws;
     try {
       const protocol = PARTYKIT_HOST.includes("localhost") ? "ws" : "wss";
-      ws = new WebSocket(`${protocol}://${PARTYKIT_HOST}/party/${ROOM_ID}`);
+      const url = `${protocol}://${PARTYKIT_HOST}/party/${ROOM_ID}`;
+      console.log("[MuleRun MP] Connecting to:", url);
+      ws = new WebSocket(url);
       wsRef.current = ws;
     } catch (err) {
-      console.warn("PartyKit not available, running in single-player mode.", err);
+      console.warn("[MuleRun MP] Failed to connect:", err);
       return;
     }
 
     ws.onopen = () => {
+      console.log("[MuleRun MP] Connected!");
       setIsConnected(true);
-      // Send join message
       ws.send(JSON.stringify({
         type: "join",
         name: playerName,
@@ -48,21 +45,25 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
       let data;
       try { data = JSON.parse(e.data); } catch { return; }
 
+      const myId = myIdRef.current;
+
       switch (data.type) {
         case "init":
-          setMyId(data.playerId);
+          console.log("[MuleRun MP] Init, my ID:", data.playerId, "players:", Object.keys(data.players || {}).length);
+          myIdRef.current = data.playerId;
           setOtherPlayers(data.players || {});
           setOnlineCount(Object.keys(data.players || {}).length + 1);
           break;
 
         case "player_joined":
-          if (data.id !== myId) {
+          if (data.id !== myIdRef.current) {
+            console.log("[MuleRun MP] Player joined:", data.player.name);
             setOtherPlayers(prev => ({ ...prev, [data.id]: data.player }));
+            if (chatCallbackRef.current) {
+              chatCallbackRef.current("🌐 WORLD", `${data.player.name} joined the world! 🫏`, null);
+            }
           }
           setOnlineCount(data.count);
-          if (chatCallbackRef.current && data.id !== myId) {
-            chatCallbackRef.current("🌐 WORLD", `${data.player.name} joined the world! 🫏`, null);
-          }
           break;
 
         case "player_moved":
@@ -74,6 +75,7 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
           break;
 
         case "player_left":
+          console.log("[MuleRun MP] Player left:", data.name);
           setOtherPlayers(prev => {
             const next = { ...prev };
             delete next[data.id];
@@ -86,12 +88,11 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
           break;
 
         case "chat":
-          if (data.id !== myId) {
-            // Store chat bubble on the player (3 sec = ~180 frames at 60fps)
+          if (data.id !== myIdRef.current) {
             setOtherPlayers(prev => {
               const p = prev[data.id];
               if (!p) return prev;
-              return { ...prev, [data.id]: { ...p, chatMsg: data.msg, chatTimer: 180 } };
+              return { ...prev, [data.id]: { ...p, chatMsg: data.msg, chatTimer: 500 } };
             });
             if (chatCallbackRef.current) {
               chatCallbackRef.current(data.name, data.msg, data.skin);
@@ -103,7 +104,7 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
           setOtherPlayers(prev => {
             const p = prev[data.id];
             if (!p) return prev;
-            return { ...prev, [data.id]: { ...p, emote: data.emote, emoteTimer: 140 } };
+            return { ...prev, [data.id]: { ...p, emote: data.emote, emoteTimer: 400 } };
           });
           break;
 
@@ -116,11 +117,12 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
     };
 
     ws.onclose = () => {
+      console.log("[MuleRun MP] Disconnected");
       setIsConnected(false);
     };
 
     ws.onerror = (err) => {
-      console.warn("PartyKit connection error:", err);
+      console.warn("[MuleRun MP] Error:", err);
     };
 
     return () => {
@@ -129,39 +131,34 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
     };
   }, [enabled, playerName, playerSkin, walletAddr]);
 
-  // Send player position (throttled)
   const lastSentRef = useRef(0);
   const sendMove = useCallback((x, y, dir) => {
     const now = Date.now();
-    if (now - lastSentRef.current < 50) return; // max 20 updates/sec
+    if (now - lastSentRef.current < 50) return;
     lastSentRef.current = now;
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: "move", x, y, dir }));
     }
   }, []);
 
-  // Send chat message
   const sendChat = useCallback((name, msg, skin) => {
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: "chat", name, msg, skin }));
     }
   }, []);
 
-  // Send emote
   const sendEmote = useCallback((emote) => {
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: "emote", emote }));
     }
   }, []);
 
-  // Send event (token launch, agent deploy, etc)
   const sendEvent = useCallback((event, name, detail) => {
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: "event", event, name, detail }));
     }
   }, []);
 
-  // Register callbacks
   const onChat = useCallback((cb) => { chatCallbackRef.current = cb; }, []);
   const onEvent = useCallback((cb) => { eventCallbackRef.current = cb; }, []);
 
@@ -169,7 +166,7 @@ export function useMultiplayer(enabled, playerName, playerSkin, walletAddr) {
     otherPlayers,
     onlineCount,
     isConnected,
-    myId,
+    myId: myIdRef.current,
     sendMove,
     sendChat,
     sendEmote,
