@@ -727,7 +727,7 @@ export default function MuleRunWorld() {
   const [onlineCount] = useState(7 + Math.floor(Math.random() * 12));
 
   // Project CA — set your contract address here
-  const PROJECT_CA = "0x0000000000000000000000000000000000000000"; // Replace with your real CA
+  const PROJECT_CA = "xxxxxxxxxxxxxxxxxxxxxxxx"; // Replace with your real CA
   const [caCopied, setCaCopied] = useState(false);
   const copyCA = () => { navigator.clipboard.writeText(PROJECT_CA); setCaCopied(true); setTimeout(() => setCaCopied(false), 2000); };
 
